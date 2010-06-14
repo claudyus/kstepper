@@ -25,101 +25,143 @@
 
 #include <asm/ioctl.h>
 
-#include "motor_pwm.h"
 #include "motor.h"
 
+#define DRV_NAME	"stepper-drv"
+#define DRV_DESC	"Stepper motor driver using gpio and pwm pins"
+#define DRV_VERSION	"0.0.1"
+
+#define MAX_MOT_NUM 4
 
 /* module var*/
 struct class *motor_class;
 struct pwm_channel *pwmc;
 int steps_max, steps;
 static dev_t motor_devno = 0;
+//struct work_struct *wk;
 
 /* module parameters */
 char *motor_name = NULL;
-int g_enable = 0 , g_dir = 0, pwm_step = 0, g_step = 0, g_lpwr = 0;
+int g_enable[MAX_MOT_NUM] = {0} , g_dir[MAX_MOT_NUM] = {0}, \
+		use_pwm[MAX_MOT_NUM] = {0}, g_step[MAX_MOT_NUM] = {0}, \
+		g_lpwr[MAX_MOT_NUM] = {0};
 
 
-module_param(motor_name, charp, 0);
-MODULE_PARM_DESC(motor_name, "The device name of the motor.");
-module_param(g_enable, int, 0);
-MODULE_PARM_DESC(g_enable, "The gpio pin connected to stepper motor enable.");
-module_param(g_dir, int, 0);
-MODULE_PARM_DESC(g_dir, "The gpio pin connected to stepper motor direction pin.");
-module_param(pwm_step, int, 0);
-MODULE_PARM_DESC(pwm_step, "The pwm index of channel, if 0 g_step should be defined.");
-module_param(g_step, int, 0);
-MODULE_PARM_DESC(g_step, "The gpio pin connected to stepper motor step pin.");
-module_param(g_lpwr, int, 0);
-MODULE_PARM_DESC(g_lpwr, "The gpio pin connected to stepper motor lowpower pin.");
+static unsigned int mot0[6] __initdata;
+static unsigned int mot1[6] __initdata;
+static unsigned int mot2[6] __initdata;
+static unsigned int mot3[6] __initdata;
+
+static unsigned int mot_nump[MAX_MOT_NUM] __initdata;
+
+static int mot_map[MAX_MOT_NUM] = {0};
+
+#define BUS_PARM_DESC \
+	" config -> id,en,dir,step[,lowpwr,use_pwm]"
+
+module_param_array(mot0, uint, &mot_nump[0], 0);
+MODULE_PARM_DESC(mot0, "mot0" BUS_PARM_DESC);
+module_param_array(mot1, uint, &mot_nump[1], 0);
+MODULE_PARM_DESC(mot1, "mot1" BUS_PARM_DESC);
+module_param_array(mot2, uint, &mot_nump[2], 0);
+MODULE_PARM_DESC(mot2, "mot2" BUS_PARM_DESC);
+module_param_array(mot3, uint, &mot_nump[3], 0);
+MODULE_PARM_DESC(mot3, "mot3" BUS_PARM_DESC);
+
 
 static void motor_pwm_set(struct pwm_channel *pwmc, unsigned long up, unsigned long period ) {
-
 	//pwm_config(motor_data->pwmc, up, period);
 	pwm_channel_enable(pwmc);
 }
 
-/* IRQ handler */
-void irq_steps_handler (struct pwm_channel *ch) {
+//static DECLARE_DELAYED_WORK(work, gpio_pwm);
 
+
+/* IRQ handler */
+static void irq_steps_handler (struct pwm_channel *ch) {
 	steps++;
 	if (steps >= steps_max)
 		pwm_channel_disable(ch);
 }
 
+static int cdev_to_id (struct cdev* cdev) {
+	int i;
+	for (i=0; i < MAX_MOT_NUM; i++) {
+		if (cdev == (struct cdev*) (mot_map[i]))
+			return i;
+	}
+	return 0;
+}
+
 /* IOCTL interface */
 static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, unsigned long arg) {
 
-	int retval = 0;
+	int retval = 0, id;
+	struct cdev* p = in->i_cdev;
+
+	id = cdev_to_id (p);
 
 	switch (cmd) {
 		case MOTOR_ENABLE:
 			if ((int)arg)
-				gpio_set_value (g_enable, 1);
+				gpio_set_value (g_enable[id], 0);
 			else
-				gpio_set_value (g_enable , 0);
-			break;		
-
-		case MOTOR_LOWPWR:
-			if ((int)arg)
-				gpio_set_value (g_lpwr, 1);
-			else
-				gpio_set_value (g_lpwr, 0);
+				gpio_set_value (g_enable[id], 1);
 			break;
 
 		case MOTOR_DIR:
 			if ((int)arg)
-				gpio_set_value (g_dir, 1);
+				gpio_set_value (g_dir[id], 1);
 			else
-				gpio_set_value (g_dir, 0);
+				gpio_set_value (g_dir[id], 0);
 			break;
 
 		case MOTOR_PWM_OFF:
-			pwm_channel_disable (pwmc);
-			break;	
+			if (g_step == 0) {
+				printk (KERN_INFO "stepper: not yet implemented.\n");
+			} else
+				pwm_channel_disable (pwmc);
+			break;
 
 		case MOTOR_PWM_ON:
-			pwm_channel_enable (pwmc);
-			break;	
+			if (g_step[id] == 0) {
+				printk (KERN_INFO "stepper: not yet implemented.\n");
+			} else
+				pwm_channel_enable (pwmc);
+			break;
 
 		case MOTOR_PWM_SET:
-			//set the pwm period in ns
-			motor_pwm_set (pwmc, (int)arg<<2, (int)arg );
+			if (g_step[id] == 0) {
+				printk (KERN_INFO "stepper: not yet implemented.\n");
+			} else {
+				//set the pwm period in ns
+				motor_pwm_set (pwmc, (int)arg<<2, (int)arg );
+			}
 			break;
 
 		case MOTOR_STEPS_RESET:
-			steps = 0;
+			steps = 0; /* set the actual position as home */
 			break;
 
 		case MOTOR_STEPS_MAX:
-			steps_max = (int) arg;
+			steps_max = (int) arg; /* set the steps limit */
 			break;
 
 		case MOTOR_STEPS_ENABLE:
+			if (g_step[id] == 0) {
+			} else {
+				if ((int)arg)
+					retval = pwm_channel_handler (pwmc, &irq_steps_handler);
+				else
+					retval = pwm_channel_handler (pwmc, NULL);
+			}
+			break;
+
+		case MOTOR_LOWPWR:
 			if ((int)arg)
-				retval = pwm_channel_handler (pwmc, &irq_steps_handler);
+				gpio_set_value (g_lpwr[id], 1);
 			else
-				retval = pwm_channel_handler (pwmc, NULL);
+				gpio_set_value (g_lpwr[id], 0);
 			break;
 
 		default:
@@ -134,45 +176,72 @@ struct file_operations motor_fops = {
 	.ioctl = motor_ioctl,
 };
 
-static int __init motor_init(void)	
+static int motor_add_one(unsigned int id, unsigned int *params)
 {
 	int status;
 	struct cdev *motor_cdev;
 
+	if ( mot_nump[id] < 4 ) {
+		printk(KERN_INFO "stepper: nothing to register for id: %d.\n", id);
+		return 0;
+	}
+
+	g_enable[id] = params[1];
+	g_dir[id] = params[2];
+	g_step[id] = params[3];
+	g_lpwr[id] = params[4];
+	use_pwm[id] = params[5];
+
 	/* sanity check */
-	if ( !(motor_name[0] & g_enable & g_dir & (pwm_step | g_step))) {
+	if ( !( g_enable[id] && g_dir[id] && g_step[id])) {
 		printk(KERN_INFO "stepper: missing parameters, exit driver.\n");
 		goto err_para;
 	}
+	printk (KERN_INFO "stepper: B.\n");
 
 	/* request and set pwm channel and gpio pins */
-	pwm_channel_alloc(pwm_step, pwmc);
-	if (IS_ERR(pwmc)) {
-		goto err_pwm;
-	}
+	if (use_pwm == 0) {
 
-	if ( !gpio_request(g_enable, "motor-enable")) {
+		if ( gpio_request(g_step[id], "motor-step") < 0 ) {
+			goto err_gpiostep;
+		}
+		gpio_direction_output(g_step[id] ,0);
+		printk (KERN_INFO "stepper: not yet implemented.\n");
+		//gpio_steps = create_workqueue("gpio_steps");
+
+	} else {
+		pwm_channel_alloc(g_step[id], pwmc);
+		if (IS_ERR(pwmc)) {
+			goto err_pwm;
+		}
+	}
+	printk (KERN_INFO "stepper: C.\n");
+
+	if ( gpio_request(g_enable[id], "motor-enable") < 0 ) {
 		goto err_gpioenable;
 	}
-	if ( !gpio_request(g_dir, "motor-ccw")) {
+	gpio_direction_output(g_enable[id] ,0);
+
+	if ( gpio_request(g_dir[id], "motor-ccw") < 0) {
 		goto err_gpiodir;
 	}
-	if (!g_lpwr) {
-		if ( !gpio_request(g_lpwr, "motor-lowpwr")) {
+	gpio_direction_output(g_dir[id] ,0);
+
+	if (g_lpwr[id] != 0) {
+		if ( gpio_request(g_lpwr[id], "motor-lowpwr") < 0 ) {
 			goto err_gpiolwr;
 		}
-		gpio_set_value(g_lpwr, 0);
+		gpio_direction_output(g_lpwr[id] ,0);
 	}
+		printk (KERN_INFO "stepper: D.\n");
 
-	gpio_set_value(g_enable, 0);
-	gpio_set_value(g_dir, 0);
-
-	/* set the home */
+	/* set to home */
 	steps=0;
 
 	/* alloc a new device number (major: dynamic, minor: 0) */
-	status = alloc_chrdev_region(&motor_devno, 0, 1, "motor-pwm");
+	status = alloc_chrdev_region(&motor_devno, 0, 1, "motor");
 
+		printk (KERN_INFO "stepper: E.\n");
 	/* create a new char device  */
 	motor_cdev = cdev_alloc();
 	if(motor_cdev == NULL) {
@@ -180,39 +249,79 @@ static int __init motor_init(void)
 		goto err_dev;
 	}
 
+	/*save the cdev for id's */
+	mot_map[id] = (int) motor_cdev;
+
 	motor_cdev->owner = THIS_MODULE;
 	motor_cdev->ops = &motor_fops;
 	status = cdev_add(motor_cdev, motor_devno, 1);
 	if(status){
 		goto err_dev;
 	}
-
-	/* register the class */
-	motor_class = class_create(THIS_MODULE, "motor_class");
-	if(IS_ERR(motor_class)){
-		goto err_dev;
-	}
-
-	device_create(motor_class, NULL, motor_devno, NULL, motor_name);
-	printk(KERN_INFO "motor: %s registerd on major: %u; minor: %u\n", \
+5
+	device_create(motor_class, NULL, motor_devno, NULL, "motor%d", params[0]);
+	printk(KERN_INFO "stepper: %s registerd on major: %u; minor: %u\n", \
 		motor_name, MAJOR(motor_devno), MINOR(motor_devno));
 
 	return 0;
 
 err_dev:
+	printk(KERN_INFO "stepper: err_dev\n");
 err_gpiolwr:
+	printk(KERN_INFO "stepper: err_gpiolwr\n");
 err_gpiodir:
+	printk(KERN_INFO "stepper: err_gpiodir\n");
 err_gpioenable:
+	printk(KERN_INFO "stepper: err_gpioenable\n");
+err_gpiostep:
+	printk(KERN_INFO "stepper: err_gpiostep ");
 err_pwm:
+	printk(KERN_INFO "stepper: err_pwm\n");
 err_para:
-	printk(KERN_INFO "stepper: Error management not implemented. \
-		Please reboot your board\n");
+	printk(KERN_INFO "stepper: Error management not yet implemented. \
+		Please reboot your board %d\n",g_step[id]);
+	return -1;
+}
+
+static int __init motor_init(void)
+{
+	int err;
+
+	printk(KERN_INFO DRV_DESC ", version " DRV_VERSION "\n");
+
+	/* register the class *
+	motor_class = class_create(THIS_MODULE, "motor_class");
+	if(IS_ERR(motor_class)){
+		goto err;
+	}*/
+
+	err = motor_add_one(0, mot0);
+	if (err) goto err;
+
+	err = motor_add_one(1, mot1);
+	if (err) goto err;
+
+	err = motor_add_one(2, mot2);
+	if (err) goto err;
+
+	err = motor_add_one(3, mot3);
+	if (err) goto err;
+
+	return 0;
+
+err:
+	class_unregister(motor_class);
 	return -1;
 }
 
 static void __exit motor_exit(void)
 {
+	int i;
 
+	class_unregister(motor_class);
+
+	/*free the gpio_pins*/
+//	for (i=0; i < 
 }
 
 module_init(motor_init);
