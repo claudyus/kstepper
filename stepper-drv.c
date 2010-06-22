@@ -21,7 +21,7 @@
 #include <linux/gpio.h>
 #include <linux/slab.h>
 #include <linux/io.h>
-#include <linux/atmel_pwm.h>
+#include <linux/pwm/pwm.h>
 
 #include <asm/ioctl.h>
 
@@ -35,10 +35,9 @@
 
 /* module var*/
 struct class *motor_class;
-struct pwm_channel *pwmc;
-int steps_max, steps;
 static dev_t motor_devno = 0;
-//struct work_struct *wk;
+int steps_max[MAX_MOT_NUM] = {0}, steps[MAX_MOT_NUM] = {0};
+struct pwm_channel *pwmc[MAX_MOT_NUM];
 
 /* module parameters */
 char *motor_name = NULL;
@@ -55,9 +54,10 @@ static unsigned int mot3[6] __initdata;
 static unsigned int mot_nump[MAX_MOT_NUM] __initdata;
 
 static int mot_map[MAX_MOT_NUM] = {0};
+static int mot_map_pwm[MAX_MOT_NUM] = {0};
 
 #define BUS_PARM_DESC \
-	" config -> id,en,dir,step[,lowpwr,use_pwm]"
+	" config -> id,en,dir,step[,lowpwr]"
 
 module_param_array(mot0, uint, &mot_nump[0], 0);
 MODULE_PARM_DESC(mot0, "mot0" BUS_PARM_DESC);
@@ -69,19 +69,20 @@ module_param_array(mot3, uint, &mot_nump[3], 0);
 MODULE_PARM_DESC(mot3, "mot3" BUS_PARM_DESC);
 
 
-static void motor_pwm_set(struct pwm_channel *pwmc, unsigned long up, unsigned long period ) {
-	//pwm_config(motor_data->pwmc, up, period);
-	pwm_channel_enable(pwmc);
-}
+static int motor_pwm_set(struct pwm_channel *pwmc, unsigned long up, unsigned long period ) {
+	struct pwm_channel_config cfg;
+	if (up == 0 && period == 0) {
+		up = 1000UL;
+		period = 1000UL;
+	}
 
-//static DECLARE_DELAYED_WORK(work, gpio_pwm);
+	cfg.config_mask = PWM_CONFIG_DUTY_NS
+		| PWM_CONFIG_PERIOD_NS;
 
+	cfg.duty_ns = up * 1000000UL;
+	cfg.period_ns = period * 1000000UL;
 
-/* IRQ handler */
-static void irq_steps_handler (struct pwm_channel *ch) {
-	steps++;
-	if (steps >= steps_max)
-		pwm_channel_disable(ch);
+	return pwm_config(pwmc, &cfg);
 }
 
 static int cdev_to_id (struct cdev* cdev) {
@@ -91,6 +92,24 @@ static int cdev_to_id (struct cdev* cdev) {
 			return i;
 	}
 	return 0;
+}
+
+static int pwmc_to_id (struct pwm_channel *ch) {
+	int i;
+	for (i=0; i < MAX_MOT_NUM; i++) {
+		if (ch == (struct pwm_channel*) (mot_map_pwm[i]))
+			return i;
+	}
+	return 0;
+}
+
+/* IRQ handler */
+static void irq_steps_handler (struct pwm_channel *ch) {
+	int id = pwmc_to_id (ch);
+
+	steps[id]++;
+	if (steps[id] >= steps_max[id])
+		pwm_stop(ch);
 }
 
 /* IOCTL interface */
@@ -116,44 +135,34 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 				gpio_set_value (g_dir[id], 0);
 			break;
 
-		case MOTOR_PWM_OFF:
-			if (g_step == 0) {
-				printk (KERN_INFO "stepper: not yet implemented.\n");
-			} else
-				pwm_channel_disable (pwmc);
+		case MOTOR_PWM_ON:
+			pwm_start (pwmc[id]);
 			break;
 
-		case MOTOR_PWM_ON:
-			if (g_step[id] == 0) {
-				printk (KERN_INFO "stepper: not yet implemented.\n");
-			} else
-				pwm_channel_enable (pwmc);
+		case MOTOR_PWM_OFF:
+			pwm_stop (pwmc[id]);
 			break;
 
 		case MOTOR_PWM_SET:
-			if (g_step[id] == 0) {
-				printk (KERN_INFO "stepper: not yet implemented.\n");
-			} else {
-				//set the pwm period in ns
-				motor_pwm_set (pwmc, (int)arg<<2, (int)arg );
-			}
+			//set the pwm period in ms
+			motor_pwm_set (pwmc[id], (int)arg<<2, (int)arg );
 			break;
 
 		case MOTOR_STEPS_RESET:
-			steps = 0; /* set the actual position as home */
+			steps[id] = 0; /* set the actual position as home */
 			break;
 
 		case MOTOR_STEPS_MAX:
-			steps_max = (int) arg; /* set the steps limit */
+			steps_max[id] = (int) arg; /* set the steps limit */
 			break;
 
 		case MOTOR_STEPS_ENABLE:
 			if (g_step[id] == 0) {
 			} else {
 				if ((int)arg)
-					retval = pwm_channel_handler (pwmc, &irq_steps_handler);
+					retval = pwm_set_handler (pwmc[id], &irq_steps_handler, NULL);
 				else
-					retval = pwm_channel_handler (pwmc, NULL);
+					retval = pwm_set_handler (pwmc[id], NULL, NULL);
 			}
 			break;
 
@@ -200,22 +209,11 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 	printk (KERN_INFO "stepper: B.\n");
 
 	/* request and set pwm channel and gpio pins */
-	if (use_pwm == 0) {
-
-		if ( gpio_request(g_step[id], "motor-step") < 0 ) {
-			goto err_gpiostep;
-		}
-		gpio_direction_output(g_step[id] ,0);
-		printk (KERN_INFO "stepper: not yet implemented.\n");
-		//gpio_steps = create_workqueue("gpio_steps");
-
-	} else {
-		pwm_channel_alloc(g_step[id], pwmc);
-		if (IS_ERR(pwmc)) {
-			goto err_pwm;
-		}
+	pwmc[id] = pwm_request("gpio_pwm", g_step[id], "stepper");
+	if (IS_ERR(pwmc[id])) {
+		goto err_pwm;
 	}
-	printk (KERN_INFO "stepper: C.\n");
+	pwm_stop(pwmc[id]);
 
 	if ( gpio_request(g_enable[id], "motor-enable") < 0 ) {
 		goto err_gpioenable;
@@ -236,7 +234,7 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 		printk (KERN_INFO "stepper: D.\n");
 
 	/* set to home */
-	steps=0;
+	steps[id] = 0;
 
 	/* alloc a new device number (major: dynamic, minor: 0) */
 	status = alloc_chrdev_region(&motor_devno, 0, 1, "motor");
@@ -258,7 +256,7 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 	if(status){
 		goto err_dev;
 	}
-5
+
 	device_create(motor_class, NULL, motor_devno, NULL, "motor%d", params[0]);
 	printk(KERN_INFO "stepper: %s registerd on major: %u; minor: %u\n", \
 		motor_name, MAJOR(motor_devno), MINOR(motor_devno));
@@ -316,7 +314,7 @@ err:
 
 static void __exit motor_exit(void)
 {
-	int i;
+	//int i;
 
 	class_unregister(motor_class);
 
