@@ -145,7 +145,7 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 
 		case MOTOR_PWM_SET:
 			//set the pwm period in ms
-			motor_pwm_set (pwmc[id], (int)arg<<2, (int)arg );
+			motor_pwm_set (pwmc[id], (int)arg>>2, (int)arg );
 			break;
 
 		case MOTOR_STEPS_RESET:
