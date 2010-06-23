@@ -206,14 +206,12 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 		printk(KERN_INFO "stepper: missing parameters, exit driver.\n");
 		goto err_para;
 	}
-	printk (KERN_INFO "stepper: B.\n");
 
 	/* request and set pwm channel and gpio pins */
 	pwmc[id] = pwm_request("gpio_pwm", g_step[id], "stepper");
 	if (IS_ERR(pwmc[id])) {
 		goto err_pwm;
 	}
-	pwm_stop(pwmc[id]);
 
 	if ( gpio_request(g_enable[id], "motor-enable") < 0 ) {
 		goto err_gpioenable;
@@ -231,7 +229,6 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 		}
 		gpio_direction_output(g_lpwr[id] ,0);
 	}
-		printk (KERN_INFO "stepper: D.\n");
 
 	/* set to home */
 	steps[id] = 0;
@@ -258,8 +255,8 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 	}
 
 	device_create(motor_class, NULL, motor_devno, NULL, "motor%d", params[0]);
-	printk(KERN_INFO "stepper: %s registerd on major: %u; minor: %u\n", \
-		motor_name, MAJOR(motor_devno), MINOR(motor_devno));
+	printk(KERN_INFO "stepper: motor%d registerd on major: %u; minor: %u\n", \
+		params[0], MAJOR(motor_devno), MINOR(motor_devno));
 
 	return 0;
 
@@ -287,11 +284,11 @@ static int __init motor_init(void)
 
 	printk(KERN_INFO DRV_DESC ", version " DRV_VERSION "\n");
 
-	/* register the class *
+	/*register the class */
 	motor_class = class_create(THIS_MODULE, "motor_class");
 	if(IS_ERR(motor_class)){
 		goto err;
-	}*/
+	}
 
 	err = motor_add_one(0, mot0);
 	if (err) goto err;
