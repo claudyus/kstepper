@@ -172,6 +172,11 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 				gpio_set_value (g_lpwr[id], 0);
 			break;
 
+		/* return steps_max-step */
+		case MOTOR_TO_END:
+			retval = steps_max[id] - steps[id];
+			break;
+
 		default:
 			retval = -EINVAL;
 	}
