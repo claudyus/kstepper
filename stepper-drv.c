@@ -40,7 +40,6 @@ int steps_max[MAX_MOT_NUM] = {0}, steps[MAX_MOT_NUM] = {0};
 struct pwm_channel *pwmc[MAX_MOT_NUM];
 
 /* module parameters */
-char *motor_name = NULL;
 int g_enable[MAX_MOT_NUM] = {0} , g_dir[MAX_MOT_NUM] = {0}, \
 		use_pwm[MAX_MOT_NUM] = {0}, g_step[MAX_MOT_NUM] = {0}, \
 		g_lpwr[MAX_MOT_NUM] = {0};
@@ -236,7 +235,6 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 	/* alloc a new device number (major: dynamic, minor: 0) */
 	status = alloc_chrdev_region(&motor_devno, 0, 1, "motor");
 
-		printk (KERN_INFO "stepper: E.\n");
 	/* create a new char device  */
 	motor_cdev = cdev_alloc();
 	if(motor_cdev == NULL) {
@@ -255,7 +253,7 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 	}
 
 	device_create(motor_class, NULL, motor_devno, NULL, "motor%d", params[0]);
-	printk(KERN_INFO "stepper: motor%d registerd on major: %u; minor: %u\n", \
+	printk(KERN_INFO "stepper: motor%d registred on major: %u; minor: %u\n", \
 		params[0], MAJOR(motor_devno), MINOR(motor_devno));
 
 	return 0;
@@ -311,7 +309,6 @@ err:
 
 static void __exit motor_exit(void)
 {
-	//int i;
 
 	class_unregister(motor_class);
 
