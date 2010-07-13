@@ -147,15 +147,15 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 			motor_pwm_set (pwmc[id], (int)arg>>2, (int)arg );
 			break;
 
-		case MOTOR_STEPS_RESET:
+		case MOTOR_RESET:
 			steps[id] = 0; /* set the actual position as home */
 			break;
 
-		case MOTOR_STEPS_MAX:
+		case MOTOR_STEPS:
 			steps_max[id] = (int) arg; /* set the steps limit */
 			break;
 
-		case MOTOR_STEPS_ENABLE:
+		case MOTOR_START:
 			if (g_step[id] == 0) {
 			} else {
 				if ((int)arg)
