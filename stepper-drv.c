@@ -213,7 +213,7 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 
 	/* request and set pwm channel and gpio pins */
 	pwmc[id] = pwm_request("gpio_pwm", g_step[id], "stepper");
-	if (IS_ERR(pwmc[id])) {
+	if (IS_ERR(pwmc[id]) || !pwmc[id]) {
 		goto err_pwm;
 	}
 
