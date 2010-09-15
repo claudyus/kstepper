@@ -28,7 +28,7 @@
 
 #define DRV_NAME	"stepper-drv"
 #define DRV_DESC	"Stepper motor driver using gpio and pwm pins"
-#define DRV_VERSION	"0.0.1"
+#define DRV_VERSION	"0.1.0"
 
 #define MAX_MOT_NUM 4
 
@@ -232,7 +232,7 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 		goto err;
 
 	pwmc[id] = pwm_request("gpio_pwm", g_step[id], "stepper");
-	if (IS_ERR(pwmc[id]) || !pwmc[id]) {
+	if (pwmc[id] != NULL) {
 		goto err_pwm;
 	}
 
