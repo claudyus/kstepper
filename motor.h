@@ -1,4 +1,5 @@
 
+#include <asm/ioctl.h>
 
 #define IOC_MOTOR_MAGIC  'K'
 /* input */

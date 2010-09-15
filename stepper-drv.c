@@ -23,8 +23,6 @@
 #include <linux/io.h>
 #include <linux/pwm/pwm.h>
 
-#include <asm/ioctl.h>
-
 #include "motor.h"
 
 #define DRV_NAME	"stepper-drv"
