@@ -35,7 +35,7 @@
 /* module var*/
 struct class *motor_class;
 static dev_t motor_devno = 0;
-int steps_max[MAX_MOT_NUM] = {0}, steps[MAX_MOT_NUM] = {0};
+unsigned long steps_max[MAX_MOT_NUM] = {0}, steps[MAX_MOT_NUM] = {0};
 struct pwm_channel *pwmc[MAX_MOT_NUM];
 
 /* module parameters */
@@ -67,18 +67,20 @@ module_param_array(mot3, uint, &mot_nump[3], 0);
 MODULE_PARM_DESC(mot3, "mot3" BUS_PARM_DESC);
 
 
-static int motor_pwm_set(struct pwm_channel *pwmc, unsigned long up, unsigned long period ) {
+static int motor_pwm_set(struct pwm_channel *pwmc, unsigned long u, \
+						  unsigned long p ) {
+
 	struct pwm_channel_config cfg;
-	if (up == 0 && period == 0) {
-		up = 1000UL;
-		period = 1000UL;
+	if (u == 0 && p == 0) {
+		cfg.duty_ns = 1000000UL;
+		cfg.period_ns = 10000000UL;
+	} else {
+		cfg.duty_ns = u * 1000000UL;	/* ns to ms */
+		cfg.period_ns = p * 1000000UL;
 	}
 
 	cfg.config_mask = PWM_CONFIG_DUTY_NS
 		| PWM_CONFIG_PERIOD_NS;
-
-	cfg.duty_ns = up * 1000000UL;
-	cfg.period_ns = period * 1000000UL;
 
 	return pwm_config(pwmc, &cfg);
 }
@@ -143,7 +145,7 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 
 		case MOTOR_PWM_SET:
 			//set the pwm period in ms
-			motor_pwm_set (pwmc[id], (int)arg>>2, (int)arg );
+			motor_pwm_set (pwmc[id], arg>>2, arg );
 			break;
 
 		case MOTOR_RESET:
@@ -151,7 +153,7 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 			break;
 
 		case MOTOR_STEPS:
-			steps_max[id] = (int) arg; /* set the steps limit */
+			steps_max[id] = arg; /* set the steps limit */
 			break;
 
 		case MOTOR_START:
