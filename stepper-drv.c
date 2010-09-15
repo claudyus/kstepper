@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/pwm/pwm.h>
+#include <linux/platform_device.h>
 
 #include "motor.h"
 
@@ -189,8 +190,10 @@ struct file_operations motor_fops = {
 
 static int motor_add_one(unsigned int id, unsigned int *params)
 {
-	int status;
+	int status, err;
 	struct cdev *motor_cdev;
+	struct platform_device *pdev;
+	struct gpio_pwm_platform_data pdata;
 
 	if ( mot_nump[id] < 4 ) {
 		printk(KERN_INFO "stepper: nothing to register for id: %d.\n", id);
@@ -210,6 +213,22 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 	}
 
 	/* request and set pwm channel and gpio pins */
+	pdev = platform_device_alloc("gpio_pwm", g_step[id]);
+	if (!pdev) {
+		err = -ENOMEM;
+		goto err_para;
+	}
+
+	pdata.gpio = g_step[id];
+
+	err = platform_device_add_data(pdev, &pdata, sizeof(pdata));
+	if (err)
+		goto err;
+
+	err = platform_device_add(pdev);
+	if (err)
+		goto err;
+
 	pwmc[id] = pwm_request("gpio_pwm", g_step[id], "stepper");
 	if (IS_ERR(pwmc[id]) || !pwmc[id]) {
 		goto err_pwm;
@@ -261,6 +280,8 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 
 	return 0;
 
+err:
+	printk(KERN_INFO "stepper: err\n");
 err_dev:
 	printk(KERN_INFO "stepper: err_dev\n");
 err_gpiolwr:
