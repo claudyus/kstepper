@@ -40,9 +40,8 @@ struct pwm_channel *pwmc[MAX_MOT_NUM];
 
 /* module parameters */
 int g_enable[MAX_MOT_NUM] = {0} , g_dir[MAX_MOT_NUM] = {0}, \
-		use_pwm[MAX_MOT_NUM] = {0}, g_step[MAX_MOT_NUM] = {0}, \
-		g_lpwr[MAX_MOT_NUM] = {0};
-
+		g_step[MAX_MOT_NUM] = {0}, g_lpwr[MAX_MOT_NUM] = {0}, \
+		polarity[MAX_MOT_NUM] = {0};
 
 static unsigned int mot0[6] __initdata;
 static unsigned int mot1[6] __initdata;
@@ -55,7 +54,7 @@ static int mot_map[MAX_MOT_NUM] = {0};
 static int mot_map_pwm[MAX_MOT_NUM] = {0};
 
 #define BUS_PARM_DESC \
-	" config -> id,en,dir,step[,lowpwr]"
+	" config -> id,en,dir,step[,lowpwr,polarity]"
 
 module_param_array(mot0, uint, &mot_nump[0], 0);
 MODULE_PARM_DESC(mot0, "mot0" BUS_PARM_DESC);
@@ -113,7 +112,8 @@ static void irq_steps_handler (struct pwm_channel *ch) {
 }
 
 /* IOCTL interface */
-static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, unsigned long arg) {
+static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
+						unsigned long arg) {
 
 	int retval = 0, id;
 	struct cdev* p = in->i_cdev;
@@ -123,9 +123,9 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 	switch (cmd) {
 		case MOTOR_ENABLE:
 			if ((int)arg)
-				gpio_set_value (g_enable[id], 0);
+				gpio_set_value (g_enable[id], 0 ^ polarity[id]);
 			else
-				gpio_set_value (g_enable[id], 1);
+				gpio_set_value (g_enable[id], 1 ^ polarity[id]);
 			break;
 
 		case MOTOR_DIR:
@@ -168,9 +168,9 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 
 		case MOTOR_LOWPWR:
 			if ((int)arg)
-				gpio_set_value (g_lpwr[id], 1);
+				gpio_set_value (g_lpwr[id], 1 ^ polarity[id]);
 			else
-				gpio_set_value (g_lpwr[id], 0);
+				gpio_set_value (g_lpwr[id], 0 ^ polarity[id]);
 			break;
 
 		/* return steps_max-step */
@@ -206,7 +206,7 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 	g_dir[id] = params[2];
 	g_step[id] = params[3];
 	g_lpwr[id] = params[4];
-	use_pwm[id] = params[5];
+	polarity[id] = params[5];
 
 	/* sanity check */
 	if ( !( g_enable[id] && g_dir[id] && g_step[id])) {
