@@ -175,7 +175,7 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, uns
 
 		/* return steps_max-step */
 		case MOTOR_TO_END:
-			retval = steps_max[id] - steps[id];
+			copy_to_user(&arg, steps_max[id]-steps[id], sizeof(unsigned long));
 			break;
 
 		default:
