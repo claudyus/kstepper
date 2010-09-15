@@ -24,6 +24,8 @@
 #include <linux/pwm/pwm.h>
 #include <linux/platform_device.h>
 
+#include <asm/uaccess.h>
+
 #include "motor.h"
 
 #define DRV_NAME	"stepper-drv"
@@ -66,16 +68,15 @@ module_param_array(mot3, uint, &mot_nump[3], 0);
 MODULE_PARM_DESC(mot3, "mot3" BUS_PARM_DESC);
 
 
-static int motor_pwm_set(struct pwm_channel *pwmc, unsigned long u, \
-						  unsigned long p ) {
+static int motor_pwm_set(struct pwm_channel *pwmc, unsigned long val) {
 
 	struct pwm_channel_config cfg;
-	if (u == 0 && p == 0) {
-		cfg.duty_ns = 1000000UL;
+	if (val == 0) {
+		cfg.duty_ns   = 1000000UL;
 		cfg.period_ns = 10000000UL;
 	} else {
-		cfg.duty_ns = u * 1000000UL;	/* ns to ms */
-		cfg.period_ns = p * 1000000UL;
+		cfg.duty_ns   = val * 1000000UL / 2;	/* ns to ms */
+		cfg.period_ns = val * 1000000UL;
 	}
 
 	cfg.config_mask = PWM_CONFIG_DUTY_NS
@@ -103,12 +104,14 @@ static int pwmc_to_id (struct pwm_channel *ch) {
 }
 
 /* IRQ handler */
-static void irq_steps_handler (struct pwm_channel *ch) {
+static int irq_steps_handler (struct pwm_channel *ch, void *data) {
 	int id = pwmc_to_id (ch);
 
 	steps[id]++;
 	if (steps[id] >= steps_max[id])
 		pwm_stop(ch);
+
+	return 0;
 }
 
 /* IOCTL interface */
@@ -116,6 +119,7 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
 						unsigned long arg) {
 
 	int retval = 0, id;
+	unsigned long to_end;
 	struct cdev* p = in->i_cdev;
 
 	id = cdev_to_id (p);
@@ -145,7 +149,7 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
 
 		case MOTOR_PWM_SET:
 			//set the pwm period in ms
-			motor_pwm_set (pwmc[id], arg>>2, arg );
+			motor_pwm_set (pwmc[id], arg);
 			break;
 
 		case MOTOR_RESET:
@@ -175,7 +179,8 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
 
 		/* return steps_max-step */
 		case MOTOR_TO_END:
-			copy_to_user(&arg, steps_max[id]-steps[id], sizeof(unsigned long));
+			to_end = steps_max[id] - steps[id];
+			copy_to_user(&arg, &to_end, sizeof(unsigned long));
 			break;
 
 		default:
