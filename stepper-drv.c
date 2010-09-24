@@ -241,6 +241,8 @@ static int motor_add_one(unsigned int id, unsigned int *params)
 		goto err_pwm;
 	}
 
+	motor_pwm_set (pwmc[id], 0);	/* set default pwm pulse */
+
 	if ( gpio_request(g_enable[id], "motor-enable") < 0 ) {
 		goto err_gpioenable;
 	}
