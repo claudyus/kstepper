@@ -30,19 +30,30 @@
 
 #define DRV_NAME	"stepper-drv"
 #define DRV_DESC	"Stepper motor driver using gpio and pwm pins"
-#define DRV_VERSION	"0.1-no_pwm"
+#define DRV_VERSION	"0.2-no_pwm"
 
 #define MAX_MOT_NUM 4
 
 /* module var*/
 struct class *motor_class;
 static dev_t motor_devno = 0;
-unsigned long steps_max[MAX_MOT_NUM] = {0}, steps[MAX_MOT_NUM] = {0};
 
-/* module parameters */
-int g_enable[MAX_MOT_NUM] = {0} , g_dir[MAX_MOT_NUM] = {0}, \
-		g_step[MAX_MOT_NUM] = {0}, g_lpwr[MAX_MOT_NUM] = {0}, \
-		polarity[MAX_MOT_NUM] = {0};
+struct motor_device {
+	unsigned long steps_max;
+	unsigned long steps;
+
+	int g_enable;
+	int g_dir;
+	int g_step;
+	int g_lpwr;
+	int polarity;
+
+	struct hrtimer t;
+	int status;
+	ktime_t interval;
+
+	struct cdev *motor_cdev;
+}
 
 static unsigned int mot0[6] __initdata;
 static unsigned int mot1[6] __initdata;
@@ -51,15 +62,7 @@ static unsigned int mot3[6] __initdata;
 
 static unsigned int mot_nump[MAX_MOT_NUM] __initdata;
 
-static int mot_map[MAX_MOT_NUM] = {0};
-static int mot_map_pwm[MAX_MOT_NUM] = {0};
-static struct hrtimer *mot_map_hrtimer[MAX_MOT_NUM] = {0};
-
-// de-pwm
-static struct hrtimer t[MAX_MOT_NUM];
-static int status[MAX_MOT_NUM];
-static struct work_struct work[MAX_MOT_NUM];
-ktime_t interval[MAX_MOT_NUM];
+static struct motor_device motor[MAX_MOT_NUM] = {0}
 
 #define BUS_PARM_DESC \
 	" config -> id,en,dir,step[,lowpwr,polarity]"
@@ -81,48 +84,27 @@ static int motor_pwm_set(unsigned long val, int id) {
 	return 0;
 }
 
-static int cdev_to_id (struct cdev* cdev) {
-	int i;
-	for (i=0; i < MAX_MOT_NUM; i++) {
-		if (cdev == (struct cdev*) (mot_map[i]))
-			return i;
-	}
-	return 0;
-}
-
-static int hrtimer_to_id (struct hrtimer *t) {
-	int i;
-	for (i=0; i < MAX_MOT_NUM; i++) {
-		if (t == (struct hrtimer *) (mot_map_hrtimer[i]))
-			return i;
-	}
-	return 0;
-}
-
-static void gpio_hr_work (struct work_struct *work) {
-	printk(KERN_INFO "stepper: gpio_hr_work\n");
-}
-
 static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 {
-	int id = hrtimer_to_id(t), ret = 0;
+	int ret = 0;
 
-	printk(KERN_INFO "stepper: gpio_timeout %d\n",status[id]);
+	struct motor *mot = container_of(t, struct motor, motor);
 
-	//TODO lock?
-	if (status[id]) {
-		gpio_set_value(g_step[id] ,0);
-		status[id] = 0;
+	printk(KERN_INFO "stepper: gpio_timeout %d\n",mot.status);
+
+	if (mot->status) {
+		gpio_set_value(mot->g_step ,0);
+		mot->status = 0;
 	} else {
-		gpio_set_value(g_step[id] ,1);
-		status[id] = 1;
-		steps[id]++;
+		gpio_set_value(mot->g_step ,1);
+		mot->status = 1;
+		mot->steps++;
 	}
 
-	if (steps[id] >= steps_max[id]) {
-		hrtimer_try_to_cancel(&t[id]);
+	if (mot->steps >= mot->steps_max) {
+		hrtimer_try_to_cancel(&(mot->t));
 	} else {
-		hrtimer_forward(&t[id], ktime_get(), interval[id]);
+		hrtimer_forward(&(mot->t), ktime_get(), mot->interval);
 		return HRTIMER_RESTART;
 	}
 
@@ -137,30 +119,30 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
 	unsigned long to_end;
 	struct cdev* p = in->i_cdev;
 
-	id = cdev_to_id (p);
+	struct motor *mot = container_of(p, struct motor, motor);
 
 	//printk(KERN_INFO "stepper: arg: %l \n", arg);
 	switch (cmd) {
 		case MOTOR_ENABLE:
 			if ((int)arg)
-				gpio_set_value (g_enable[id], 0);
+				gpio_set_value (mot->g_enable, 0);
 			else
-				gpio_set_value (g_enable[id], 1);
+				gpio_set_value (mot->g_enable, 1);
 			break;
 
 		case MOTOR_DIR:
 			if ((int)arg)
-				gpio_set_value (g_dir[id], 1);
+				gpio_set_value (mot->g_dir, 1);
 			else
-				gpio_set_value (g_dir[id], 0);
+				gpio_set_value (mot->g_dir, 0);
 			break;
 
 		case MOTOR_PWM_ON:
-			hrtimer_start(&t[id], interval[id], HRTIMER_MODE_REL);
+			hrtimer_start(&(mot->t), mot->interval, HRTIMER_MODE_REL);
 			break;
 
 		case MOTOR_PWM_OFF:
-			hrtimer_cancel(&t[id]);
+			hrtimer_cancel(&(mot->t));
 			break;
 
 		case MOTOR_PWM_SET:
@@ -169,27 +151,27 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
 			break;
 
 		case MOTOR_RESET:
-			steps[id] = 0; /* set the actual position as home */
+			mot->steps = 0; /* set the actual position as home */
 			break;
 
 		case MOTOR_STEPS:
-			steps_max[id] = arg; /* set the steps limit */
+			mot->steps_max = arg; /* set the steps limit */
 			break;
 
 		case MOTOR_START:
-			hrtimer_start(&t[id], interval[id], HRTIMER_MODE_REL);
+			hrtimer_start(&(mot->t), mot->interval, HRTIMER_MODE_REL);
 			break;
 
 		case MOTOR_LOWPWR:
 			if ((int)arg)
-				gpio_set_value (g_lpwr[id], 1);
+				gpio_set_value (mot->g_lpwr, 1);
 			else
-				gpio_set_value (g_lpwr[id], 0);
+				gpio_set_value (mot->g_lpwr, 0);
 			break;
 
 		/* return steps_max-step */
 		case MOTOR_TO_END:
-			to_end = steps_max[id] - steps[id];
+			to_end = mot->steps_max - mot->steps;
 			copy_to_user(&arg, &to_end, sizeof(unsigned long));
 			break;
 
@@ -217,68 +199,68 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 		return 0;
 	}
 
-	g_enable[id] = params[1];
-	g_dir[id] = params[2];
-	g_step[id] = params[3];
-	g_lpwr[id] = params[4];
-	polarity[id] = params[5];
+	motor[id].g_enable = params[1];
+	motor[id].g_dir = params[2];
+	motor[id].g_step = params[3];
+	motor[id].g_lpwr = params[4];
+	motor[id].polarity = params[5];
 
 	/* sanity check */
-	if ( !( g_enable[id] && g_dir[id] && g_step[id])) {
+	if ( !( motor[id].g_enable && motor[id].g_dir && motor[id].g_step)) {
 		printk(KERN_INFO "stepper: missing parameters, exit driver.\n");
 		goto err_para;
 	}
 
-	INIT_WORK(&work[id], gpio_hr_work);
+//	INIT_WORK(&work[id], gpio_hr_work);
 
-	if (gpio_request(g_step[id], "motor-step"))
+	if (gpio_request(motor[id].g_step, "motor-step"))
 		return -EINVAL;
 
-	hrtimer_init(&t[id], CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init(&(motor[id].t), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
-	t[id].function = &gpio_timeout;
-	mot_map_hrtimer[id] = &t[id];
-	interval[id] = ktime_set(0, 10000000UL);
+	motor[id].t.function = &gpio_timeout;
+//	mot_map_hrtimer[id] = &t[id];
+	motor[id].interval = ktime_set(0, 10000000UL);
 
-	motor_pwm_set(1, id);
+	//motor_pwm_set(1, id);
 
-	if ( gpio_request(g_enable[id], "motor-enable") < 0 ) {
+	if ( gpio_request(motor[id].g_enable, "motor-enable") < 0 ) {
 		goto err_gpioenable;
 	}
-	gpio_direction_output(g_enable[id] ,0);
-	gpio_set_value (g_enable[id], 0);
+	gpio_direction_output(motor[id].g_enable ,0);
+	gpio_set_value (motor[id].g_enable, 0);
 
-	if ( gpio_request(g_dir[id], "motor-ccw") < 0) {
+	if ( gpio_request(motor[id].g_dir, "motor-ccw") < 0) {
 		goto err_gpiodir;
 	}
-	gpio_direction_output(g_dir[id] ,0);
+	gpio_direction_output(motor[id].g_dir ,0);
 
 	if (g_lpwr[id] != 0) {
-		if ( gpio_request(g_lpwr[id], "motor-lowpwr") < 0 ) {
+		if ( gpio_request(motor[id].g_lpwr, "motor-lowpwr") < 0 ) {
 			goto err_gpiolwr;
 		}
-		gpio_direction_output(g_lpwr[id] ,0);
+		gpio_direction_output(motor[id].g_lpwr ,0);
 	}
 
 	/* set to home */
-	steps[id] = 0;
+	motor[id].steps = 0;
 
 	/* alloc a new device number (major: dynamic, minor: 0) */
 	status = alloc_chrdev_region(&motor_devno, 0, 1, "motor");
 
 	/* create a new char device  */
-	motor_cdev = cdev_alloc();
-	if(motor_cdev == NULL) {
+	motor[id].motor_cdev = cdev_alloc();
+	if(motor[id].motor_cdev == NULL) {
 		status=-ENOMEM;
 		goto err_dev;
 	}
 
 	/*save the cdev for id's */
-	mot_map[id] = (int) motor_cdev;
+//	mot_map[id] = (int) motor_cdev;
 
 	motor_cdev->owner = THIS_MODULE;
 	motor_cdev->ops = &motor_fops;
-	status = cdev_add(motor_cdev, motor_devno, 1);
+	status = cdev_add(motor[id].motor_cdev, motor_devno, 1);
 	if(status){
 		goto err_dev;
 	}
