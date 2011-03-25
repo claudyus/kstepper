@@ -14,5 +14,5 @@
 #define MOTOR_LOWPWR		_IO(IOC_MOTOR_MAGIC, 18)
 
 /* output */
-#define MOTOR_TO_END		_IO(IOC_MOTOR_MAGIC, 20)
+#define MOTOR_TO_END		_IO(IOC_MOTOR_MAGIC, 30)	//dec: 19230
 

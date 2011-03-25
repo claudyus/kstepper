@@ -1,7 +1,7 @@
 /*
- *		Stepper motor driver over gpio with pwm support
+ *		Stepper motor driver with pwm emulating over gpio
  *
- *		Copyright (R) 2010 Claudio Mignanti - <c.mignanti@gmail.com>
+ *		Copyright (R) 2010-2011 Claudio Mignanti - <c.mignanti@gmail.com>
  *
  *		This program is free software; you can redistribute it and/or modify
  *		it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@
 
 #define DRV_NAME	"stepper-drv"
 #define DRV_DESC	"Stepper motor driver using gpio and pwm pins"
-#define DRV_VERSION	"0.2-no_pwm"
+#define DRV_VERSION	"0.3-emulating"
 
 #define MAX_MOT_NUM 4
 
@@ -53,7 +53,7 @@ struct motor_device {
 	ktime_t interval;
 
 	struct cdev *motor_cdev;
-}
+};
 
 static unsigned int mot0[6] __initdata;
 static unsigned int mot1[6] __initdata;
@@ -62,7 +62,7 @@ static unsigned int mot3[6] __initdata;
 
 static unsigned int mot_nump[MAX_MOT_NUM] __initdata;
 
-static struct motor_device motor[MAX_MOT_NUM] = {0}
+static struct motor_device motor[MAX_MOT_NUM];
 
 #define BUS_PARM_DESC \
 	" config -> id,en,dir,step[,lowpwr,polarity]"
@@ -80,17 +80,15 @@ static int motor_pwm_set(unsigned long val, int id) {
 	if (val == 0)
 		val =1;
 
-	interval[id] = ktime_set(0, val * 1000000UL);
+	motor[id].interval = ktime_set(0, val * 1000000UL);
 	return 0;
 }
 
-static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
+static enum hrtimer_restart gpio_timeout(struct hrtimer *htime)
 {
-	int ret = 0;
+	struct motor_device *mot = container_of(htime, struct motor_device, t);
 
-	struct motor *mot = container_of(t, struct motor, motor);
-
-	printk(KERN_INFO "stepper: gpio_timeout %d\n",mot.status);
+	printk(KERN_INFO "stepper: gpio_timeout %d\n",mot->status);
 
 	if (mot->status) {
 		gpio_set_value(mot->g_step ,0);
@@ -112,16 +110,15 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 }
 
 /* IOCTL interface */
-static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
-						unsigned long arg) {
+static int motor_ioctl (/* struct inode *inode, */ struct file *file, unsigned int cmd, unsigned long arg){
 
 	int retval = 0, id;
 	unsigned long to_end;
-	struct cdev* p = in->i_cdev;
 
-	struct motor *mot = container_of(p, struct motor, motor);
+	/* Ioctl was recently restructured http://lwn.net/Articles/119652/ */
+	struct cdev *p = file->f_dentry->d_inode->i_cdev;
+	struct motor_device *mot = container_of(p, struct motor_device, motor_cdev);
 
-	//printk(KERN_INFO "stepper: arg: %l \n", arg);
 	switch (cmd) {
 		case MOTOR_ENABLE:
 			if ((int)arg)
@@ -184,14 +181,14 @@ static int motor_ioctl (struct inode *in, struct file *fl, unsigned int cmd, \
 
 struct file_operations motor_fops = {
 	.owner = THIS_MODULE,
-	.ioctl = motor_ioctl,
+	.unlocked_ioctl = motor_ioctl,
 };
 
 static int __init motor_add_one(unsigned int id, unsigned int *params)
 {
-	int status, err;
+	int status;
 	struct cdev *motor_cdev;
-	struct platform_device *pdev;
+//	struct platform_device *pdev;
 	//struct gpio_pwm_platform_data pdata;
 
 	if ( mot_nump[id] < 4 ) {
@@ -235,7 +232,7 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 	}
 	gpio_direction_output(motor[id].g_dir ,0);
 
-	if (g_lpwr[id] != 0) {
+	if (motor[id].g_lpwr != 0) {
 		if ( gpio_request(motor[id].g_lpwr, "motor-lowpwr") < 0 ) {
 			goto err_gpiolwr;
 		}
@@ -255,11 +252,8 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 		goto err_dev;
 	}
 
-	/*save the cdev for id's */
-//	mot_map[id] = (int) motor_cdev;
-
-	motor_cdev->owner = THIS_MODULE;
-	motor_cdev->ops = &motor_fops;
+	motor[id].motor_cdev->owner = THIS_MODULE;
+	motor[id].motor_cdev->ops = &motor_fops;
 	status = cdev_add(motor[id].motor_cdev, motor_devno, 1);
 	if(status){
 		goto err_dev;
@@ -271,7 +265,7 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 
 	return 0;
 
-err:
+//err:
 	printk(KERN_INFO "stepper: err\n");
 err_dev:
 	printk(KERN_INFO "stepper: err_dev\n");
@@ -281,13 +275,13 @@ err_gpiodir:
 	printk(KERN_INFO "stepper: err_gpiodir\n");
 err_gpioenable:
 	printk(KERN_INFO "stepper: err_gpioenable\n");
-err_gpiostep:
+//err_gpiostep:
 	printk(KERN_INFO "stepper: err_gpiostep ");
-err_pwm:
+//err_pwm:
 	printk(KERN_INFO "stepper: err_pwm\n");
 err_para:
 	printk(KERN_INFO "stepper: Error management not yet implemented. \
-		Please reboot your board %d\n",g_step[id]);
+		Please reboot your board %d\n",motor[id].g_step);
 	return -1;
 }
 
@@ -330,15 +324,12 @@ static void __exit motor_exit(void)
 {
 
 	class_unregister(motor_class);
-
-	/*free the gpio_pins*/
-//	for (i=0; i < 
 }
 
 module_init(motor_init);
 module_exit(motor_exit);
 
 MODULE_AUTHOR("Claudio Mignanti <c.mignanti@gmail.com>");
-MODULE_DESCRIPTION("Stepper motor driver over gpio with pwm support");
+MODULE_DESCRIPTION("Stepper motor driver with pwm emulating over gpio");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:motor-pwm");
