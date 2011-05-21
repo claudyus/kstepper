@@ -36,9 +36,10 @@
 
 /* module var*/
 struct class *motor_class;
+struct motor_device *motor;
 static dev_t motor_devno = 0;
 
-static struct motor_device {
+struct motor_device {
 	unsigned long steps_max;
 	unsigned long steps;
 
@@ -48,12 +49,12 @@ static struct motor_device {
 	int g_lpwr;
 	int polarity;
 
-	struct hrtimer *t;
-	int status;
+	struct hrtimer hrt;
 	ktime_t interval;
+	int status;
 
 	struct cdev *mcdev;
-} motor[MAX_MOT_NUM];
+};
 
 static unsigned int mot0[6] __initdata;
 static unsigned int mot1[6] __initdata;
@@ -74,19 +75,32 @@ MODULE_PARM_DESC(mot2, "mot2" BUS_PARM_DESC);
 module_param_array(mot3, uint, &mot_nump[3], 0);
 MODULE_PARM_DESC(mot3, "mot3" BUS_PARM_DESC);
 
-static int motor_pwm_set(struct motor_device *motp, unsigned long val) {
-	if (val == 0)
-		val =1;
 
-	motp->interval = ktime_set(0, val * 1000000UL);
+struct motor_device * find_hrt (struct hrtimer *t)
+{
+	int i;
+	for ( i=0; i < MAX_MOT_NUM ; i++ ) {
+		if ( &(motor[i].hrt) == t)
+			return &(motor[i]);
+	}
 	return 0;
 }
 
-static enum hrtimer_restart gpio_timeout(struct hrtimer *htime)
+struct motor_device * find_cdev (struct cdev *cdev)
 {
-	struct motor_device *mot = container_of(htime, struct motor_device, t);
+	int i;
+	for ( i=0; i < MAX_MOT_NUM ; i++ ) {
+		if ( motor[i].mcdev == cdev)
+			return &(motor[i]);
+	}
+	return 0;
+}
 
-	printk(KERN_INFO "stepper: gpio_timeout %d\n",mot->status);
+
+static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
+{
+	struct motor_device *mot = find_hrt(t);
+
 
 	if (mot->status) {
 		gpio_set_value(mot->g_step ,0);
@@ -97,13 +111,12 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *htime)
 		mot->steps++;
 	}
 
-	if (mot->steps >= mot->steps_max) {
-		hrtimer_try_to_cancel(&(mot->t));
-	} else {
-		hrtimer_forward(mot->t, ktime_get(), mot->interval);
+	if (mot->steps < mot->steps_max) {
+		hrtimer_forward(&(mot->hrt), ktime_get(), mot->interval);
 		return HRTIMER_RESTART;
 	}
 
+	hrtimer_try_to_cancel(&(mot->hrt));
 	return HRTIMER_NORESTART;
 }
 
@@ -114,8 +127,8 @@ static long motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 	unsigned long to_end;
 
 	/* Ioctl was recently restructured http://lwn.net/Articles/119652/ */
-	struct cdev *cdevp = file->f_dentry->d_inode->i_cdev;
-	struct motor_device *mot = container_of(cdevp, struct motor_device, mcdev);
+	struct cdev *cdev = file->f_dentry->d_inode->i_cdev;
+	struct motor_device *mot = find_cdev(cdev);
 
 	printk(KERN_INFO "stepper: ioctl if: command %d  args %ld \n", cmd, arg);
 
@@ -134,17 +147,20 @@ static long motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 				gpio_set_value (mot->g_dir, 0);
 			break;
 
+		case MOTOR_START:
 		case MOTOR_PWM_ON:
-			hrtimer_start(mot->t, mot->interval, HRTIMER_MODE_REL);
+			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
 			break;
 
 		case MOTOR_PWM_OFF:
-			hrtimer_cancel(mot->t);
+			hrtimer_cancel(&(mot->hrt));
 			break;
 
 		case MOTOR_PWM_SET:
 			//set the pwm period in ms
-			motor_pwm_set (mot, arg);
+			if (arg == 0)	//ensure a reliable value
+				arg =1;
+			mot->interval = ktime_set(0, arg * 1000UL);
 			break;
 
 		case MOTOR_RESET:
@@ -153,10 +169,6 @@ static long motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 
 		case MOTOR_STEPS:
 			mot->steps_max = arg; /* set the steps limit */
-			break;
-
-		case MOTOR_START:
-			hrtimer_start(&(mot->t), mot->interval, HRTIMER_MODE_REL);
 			break;
 
 		case MOTOR_LOWPWR:
@@ -205,15 +217,15 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 		goto err_para;
 	}
 
-//	INIT_WORK(work[id], gpio_hr_work);
-
+//	printk(KERN_INFO "request g_spte\n");
 	if (gpio_request(motor[id].g_step, "motor-step"))
 		return -EINVAL;
 
-	hrtimer_init(motor[id].t, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init(&(motor[id].hrt), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
-	motor[id].t->function = &gpio_timeout;
-	motor[id].interval = ktime_set(0, 10000000UL);
+
+	motor[id].hrt.function = &gpio_timeout;
+	motor[id].interval = ktime_set(0, 1000000UL);
 
 	if ( gpio_request(motor[id].g_enable, "motor-enable") < 0 ) {
 		goto err_gpioenable;
@@ -241,6 +253,7 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 
 	/* create a new char device  */
 	motor[id].mcdev = cdev_alloc();
+	printk(KERN_INFO "stepper: cdev: %d\n", motor[id].mcdev);
 	if(motor[id].mcdev == NULL) {
 		status=-ENOMEM;
 		goto err_dev;
@@ -288,6 +301,8 @@ static int __init motor_init(void)
 
 	hrtimer_get_res(CLOCK_MONOTONIC, &tp);
 	printk(KERN_INFO "Clock resolution is %ldns\n", tp.tv_nsec);
+
+	motor = kmalloc(sizeof(struct motor_device) * MAX_MOT_NUM, GFP_KERNEL );
 
 	/*register the class */
 	motor_class = class_create(THIS_MODULE, "motor_class");
