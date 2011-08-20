@@ -20,6 +20,7 @@
 #include <linux/gpio.h>
 #include <linux/slab.h>
 #include <linux/io.h>
+#include <linux/input.h>
 #include <linux/platform_device.h>
 #include <linux/hrtimer.h>
 #include <linux/workqueue.h>
@@ -30,18 +31,20 @@
 
 #define DRV_NAME	"stepper-drv"
 #define DRV_DESC	"Stepper motor driver using gpio and pwm pins"
-#define DRV_VERSION	"0.3-emulating"
+#define DRV_VERSION	"0.4-emulating"
 
 #define MAX_MOT_NUM 4
 
 /* module var*/
 struct class *motor_class;
 struct motor_device *motor;
+struct input_dev *motor_input_dev;	/*manage the limits*/
 static dev_t motor_devno = 0;
 
 struct motor_device {
 	unsigned long steps_max;
 	unsigned long steps;
+	int count;
 
 	int g_enable;
 	int g_dir;
@@ -52,6 +55,8 @@ struct motor_device {
 	struct hrtimer hrt;
 	ktime_t interval;
 	int status;
+
+	unsigned long num_steps;
 
 	struct cdev *mcdev;
 };
@@ -111,17 +116,17 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 		mot->steps++;
 	}
 
-	if (mot->steps < mot->steps_max) {
-		hrtimer_forward(&(mot->hrt), ktime_get(), mot->interval);
-		return HRTIMER_RESTART;
+	if (mot->count == 1 && mot->steps >= mot->steps_max) {
+		hrtimer_try_to_cancel(&(mot->hrt));
+		return HRTIMER_NORESTART;
 	}
 
-	hrtimer_try_to_cancel(&(mot->hrt));
-	return HRTIMER_NORESTART;
+	hrtimer_forward(&(mot->hrt), ktime_get(), mot->interval);
+	return HRTIMER_RESTART;
 }
 
 /* IOCTL interface */
-static long motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
+static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 
 	int retval = 0;
 	unsigned long to_end;
@@ -148,7 +153,13 @@ static long motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 
 		case MOTOR_START:
+			mot->count = 1;	//execute step_max steps
+			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
+			break;
+
 		case MOTOR_PWM_ON:
+			//run without step count
+			mot->count = 0;
 			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
 			break;
 
@@ -191,8 +202,9 @@ static long motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 	return retval;
 }
 
+
 struct file_operations motor_fops = {
-	.owner = THIS_MODULE,
+	.owner 		= THIS_MODULE,
 	.unlocked_ioctl = motor_ioctl,
 };
 
@@ -204,12 +216,13 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 		printk(KERN_INFO "stepper: nothing to register for motor %d, too few arguments: %d.\n", id, mot_nump[id]);
 		return 0;
 	}
-//	Supported args: motX=en,dir,step[,lowpwr,polarity]
+//	Supported args: motX=en,dir,step,limit[,lowpwr,polarity]
 	motor[id].g_enable = params[0];
 	motor[id].g_dir = params[1];
 	motor[id].g_step = params[2];
-	motor[id].g_lpwr = params[3];
-	motor[id].polarity = params[4];
+	motor[id].g_limit = params[3]
+	motor[id].g_lpwr = params[4];
+	motor[id].polarity = params[5];
 
 	/* sanity check */
 	if ( !( motor[id].g_enable && motor[id].g_dir && motor[id].g_step)) {
@@ -217,7 +230,6 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 		goto err_para;
 	}
 
-//	printk(KERN_INFO "request g_spte\n");
 	if (gpio_request(motor[id].g_step, "motor-step"))
 		return -EINVAL;
 
@@ -231,12 +243,25 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 		goto err_gpioenable;
 	}
 	gpio_direction_output(motor[id].g_enable ,0);
-	gpio_set_value (motor[id].g_enable, 0);
+	gpio_set_value (motor[id].g_enable, 1);
 
 	if ( gpio_request(motor[id].g_dir, "motor-ccw") < 0) {
 		goto err_gpiodir;
 	}
 	gpio_direction_output(motor[id].g_dir ,0);
+
+
+	if ( gpio_request(motor[id].g_limit, "motor-limit") < 0) {
+		goto err_gpiolimit;
+	}
+	gpio_direction_input(motor[id].g_limit ,1);
+#if CONFIG_MACH_AT91
+	at91_set_deglitch(motor[id].g_limit, 1);	/* Enable the glitch filter for interrupt */
+#endif
+	ret = request_irq(motor[id].g_limit, enc424j600_irq, 0, DRV_NAME, priv);
+	if (ret < 0) {
+		printk(KERN_INFO "stepper: error requiring .\n");
+	}
 
 	if (motor[id].g_lpwr != 0) {
 		if ( gpio_request(motor[id].g_lpwr, "motor-lowpwr") < 0 ) {
@@ -253,7 +278,6 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 
 	/* create a new char device  */
 	motor[id].mcdev = cdev_alloc();
-	printk(KERN_INFO "stepper: cdev: %d\n", motor[id].mcdev);
 	if(motor[id].mcdev == NULL) {
 		status=-ENOMEM;
 		goto err_dev;
@@ -300,9 +324,15 @@ static int __init motor_init(void)
 	printk(KERN_INFO DRV_DESC ", version " DRV_VERSION "\n");
 
 	hrtimer_get_res(CLOCK_MONOTONIC, &tp);
-	printk(KERN_INFO "Clock resolution is %ldns\n", tp.tv_nsec);
+	printk(KERN_INFO "Minimun clock resolution is %ldns\n", tp.tv_nsec);
 
 	motor = kmalloc(sizeof(struct motor_device) * MAX_MOT_NUM, GFP_KERNEL );
+
+	motor_input_dev = input_allocate_device();
+	if (!motor_input_dev) {
+		printk(KERN_INFO "stepper: Cannot allocate input device\n");
+		return -ENOMEM;
+	}
 
 	/*register the class */
 	motor_class = class_create(THIS_MODULE, "motor_class");

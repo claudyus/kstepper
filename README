@@ -1,0 +1,40 @@
+This is a stepper driver motor for linux kernel developed to be used
+on a board with available gpios.
+
+More info on use and ioctl interface see tthe code or:
+	http://www.mignanti.eu/progetti/embd/daisy2
+
+VERSION HISTORY
+---------------
+tag v0.4:
+ * Reorganize the no-pwm version. Now it using a struct to mangle the data.
+ * Update the ioctl to support syscall redefinition for v2.6.38+
+ * Add limit support
+ * The pwm version is not aligned anymore to the nopwm version (that will be
+	the default until pwm api didn't goes upstream)
+
+tag v0.3:
+ * Added a version of the driver (stepper-nopwm.c) that emulate the funcition
+	of Bill Gatliff's api.
+ * On this tag you can found both version compatible with linux kernel v2.6.38
+ * Reorder the ioctl value (see motor.h) this values can be consider realiable
+
+tag v0.1:
+ * This version of kstepper is featuring a stepper driver build on Bill Gatfill
+	pwm api (http://lwn.net/Articles/303978/), this was implement for linux v2.6.35
+
+CROSS-COMPILE
+-------------
+To cross-compile this driver you need a gcc-arm and configured kernel. Then
+simple type:
+
+make KERNELDIR=<path_to_kernel> CROSSCOMPILE=<path to ggc cross compiler>
+
+This will generate stepper-nopwm.ko and stepper-drv.ko
+
+
+DEVELOP
+-------
+Feel free to drop me a mail for bugs, suggestion, patch and general
+improvement <c.mignanti@gmail.com>
+
