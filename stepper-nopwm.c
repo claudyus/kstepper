@@ -50,6 +50,7 @@ struct motor_device {
 	int g_dir;
 	int g_step;
 	int g_lpwr;
+	int g_limit;
 	int polarity;
 
 	struct hrtimer hrt;
@@ -101,6 +102,7 @@ struct motor_device * find_cdev (struct cdev *cdev)
 	return 0;
 }
 
+//enc424j600_irq
 
 static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 {
@@ -220,7 +222,7 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 	motor[id].g_enable = params[0];
 	motor[id].g_dir = params[1];
 	motor[id].g_step = params[2];
-	motor[id].g_limit = params[3]
+	motor[id].g_limit = params[3];
 	motor[id].g_lpwr = params[4];
 	motor[id].polarity = params[5];
 
@@ -253,14 +255,16 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 
 	if ( gpio_request(motor[id].g_limit, "motor-limit") < 0) {
 		goto err_gpiolimit;
-	}
-	gpio_direction_input(motor[id].g_limit ,1);
-#if CONFIG_MACH_AT91
-	at91_set_deglitch(motor[id].g_limit, 1);	/* Enable the glitch filter for interrupt */
+	} else {
+		gpio_direction_input(motor[id].g_limit);
+#ifdef CONFIG_MACH_AT91
+		at91_set_deglitch(motor[id].g_limit, 1);	/* Enable the glitch filter for interrupt */
 #endif
-	ret = request_irq(motor[id].g_limit, enc424j600_irq, 0, DRV_NAME, priv);
-	if (ret < 0) {
-		printk(KERN_INFO "stepper: error requiring .\n");
+/*		int ret = request_irq(motor[id].g_limit, enc424j600_irq, 0, DRV_NAME, priv);
+		if (ret < 0) {
+			printk(KERN_INFO "stepper: error requiring .\n");
+		}
+*/
 	}
 
 	if (motor[id].g_lpwr != 0) {
@@ -302,6 +306,8 @@ err_dev:
 	printk(KERN_INFO "stepper: err_dev\n");
 err_gpiolwr:
 	printk(KERN_INFO "stepper: err_gpiolwr\n");
+err_gpiolimit:
+	printk(KERN_INFO "stepper: err_gpiolimit\n");
 err_gpiodir:
 	printk(KERN_INFO "stepper: err_gpiodir\n");
 err_gpioenable:
