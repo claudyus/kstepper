@@ -17,10 +17,10 @@
 #include <linux/cdev.h>
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
+#include <linux/interrupt.h>
 #include <linux/gpio.h>
 #include <linux/slab.h>
 #include <linux/io.h>
-#include <linux/input.h>
 #include <linux/platform_device.h>
 #include <linux/hrtimer.h>
 #include <linux/workqueue.h>
@@ -102,7 +102,11 @@ struct motor_device * find_cdev (struct cdev *cdev)
 	return 0;
 }
 
-//enc424j600_irq
+static irqreturn_t stepper_irq(int irq, void *motor_ptr){
+	/* we are at the end of the rail on this direction */
+	hrtimer_try_to_cancel(&((struct motor_device *)motor_ptr)->hrt);
+	return IRQ_HANDLED;
+}
 
 static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 {
@@ -213,6 +217,7 @@ struct file_operations motor_fops = {
 static int __init motor_add_one(unsigned int id, unsigned int *params)
 {
 	int status;
+	int ret;
 
 	if ( mot_nump[id] < 3 ) {
 		printk(KERN_INFO "stepper: nothing to register for motor %d, too few arguments: %d.\n", id, mot_nump[id]);
@@ -260,11 +265,11 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 #ifdef CONFIG_MACH_AT91
 		at91_set_deglitch(motor[id].g_limit, 1);	/* Enable the glitch filter for interrupt */
 #endif
-/*		int ret = request_irq(motor[id].g_limit, enc424j600_irq, 0, DRV_NAME, priv);
+		ret = request_irq(motor[id].g_limit, stepper_irq, 0, DRV_NAME, &(motor[id]));
 		if (ret < 0) {
 			printk(KERN_INFO "stepper: error requiring .\n");
 		}
-*/
+
 	}
 
 	if (motor[id].g_lpwr != 0) {
@@ -333,12 +338,6 @@ static int __init motor_init(void)
 	printk(KERN_INFO "Minimun clock resolution is %ldns\n", tp.tv_nsec);
 
 	motor = kmalloc(sizeof(struct motor_device) * MAX_MOT_NUM, GFP_KERNEL );
-
-	motor_input_dev = input_allocate_device();
-	if (!motor_input_dev) {
-		printk(KERN_INFO "stepper: Cannot allocate input device\n");
-		return -ENOMEM;
-	}
 
 	/*register the class */
 	motor_class = class_create(THIS_MODULE, "motor_class");
