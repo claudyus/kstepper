@@ -258,18 +258,21 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 	gpio_direction_output(motor[id].g_dir ,0);
 
 
-	if ( gpio_request(motor[id].g_limit, "motor-limit") < 0) {
-		goto err_gpiolimit;
-	} else {
-		gpio_direction_input(motor[id].g_limit);
+	if (motor[id].g_limit != 0) {
+		if ( gpio_request(motor[id].g_limit, "motor-limit") < 0) {
+			goto err_gpiolimit;
+		} else {
+			gpio_direction_input(motor[id].g_limit);
 #ifdef CONFIG_MACH_AT91
-		at91_set_deglitch(motor[id].g_limit, 1);	/* Enable the glitch filter for interrupt */
+			at91_set_deglitch(motor[id].g_limit, 1);	/* Enable the glitch filter for interrupt */
 #endif
-		ret = request_irq(motor[id].g_limit, stepper_irq, 0, DRV_NAME, &(motor[id]));
-		if (ret < 0) {
-			printk(KERN_INFO "stepper: error requiring .\n");
+			ret = request_irq(motor[id].g_limit, stepper_irq, 0, DRV_NAME, &(motor[id]));
+			if (ret < 0) {
+				printk(KERN_INFO "stepper: error requiring .\n");
+			}
 		}
-
+	} else {
+		printk(KERN_INFO "stepper: mot%d is not using limits.\n", id);
 	}
 
 	if (motor[id].g_lpwr != 0) {
@@ -277,6 +280,8 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 			goto err_gpiolwr;
 		}
 		gpio_direction_output(motor[id].g_lpwr ,0);
+	} else {
+		printk(KERN_INFO "stepper: mot%d is not using low power function.\n", id);
 	}
 
 	/* set to home */
