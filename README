@@ -32,6 +32,29 @@ make KERNELDIR=<path_to_kernel> CROSSCOMPILE=<path to ggc cross compiler>
 
 This will generate stepper-nopwm.ko and stepper-drv.ko
 
+EXAMPLE OF USAGE
+----------------
+Load the module on your board:
+*********************************
+# 3 motors without limits
+# mot0 over D2 conf A, asse X
+# mot1 over D2 conf B, asse Y
+# mot2 over D3 conf A, asse Z
+
+insmod stepper-nopwm.ko mot0=63,61,59 mot1=62,60,58 mot2=68,90,86
+*********************************
+
+Now we like to test that the motor operation.
+Using motor.py we can simple issues some command:
+*********************************
+./motor.py 0 enable		#enable /dev/motor0
+./motor.py 1 enable		#enable /dev/motor1
+
+./motor.py 0 pwm_on		#active the pwm on motor0 w/o counting the steps
+./motor.py 1 steps 1000	#set the number of steps that motor 1 should execute
+./motor.py 1 start		#execute the previous operation
+**********************************
+
 
 DEVELOP
 -------
