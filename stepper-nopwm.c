@@ -70,7 +70,7 @@ static unsigned int mot3[6] __initdata;
 static unsigned int mot_nump[MAX_MOT_NUM] __initdata;
 
 #define BUS_PARM_DESC \
-	" config -> en,dir,step[,lowpwr,polarity]"
+	" config -> en,dir,step,[limit,lowpwr,polarity]"
 
 module_param_array(mot0, uint, &mot_nump[0], 0);
 MODULE_PARM_DESC(mot0, "mot0" BUS_PARM_DESC);
@@ -124,6 +124,8 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 
 	if (mot->count == 1 && mot->steps >= mot->steps_max) {
 		hrtimer_try_to_cancel(&(mot->hrt));
+		// Reset to home if steps_max is reached
+		mot->steps = 0;
 		return HRTIMER_NORESTART;
 	}
 
