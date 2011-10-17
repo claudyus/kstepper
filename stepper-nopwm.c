@@ -191,11 +191,11 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 			//set the pwm period in ns
 
 			if (arg < min_ns) {
-				printk(KERN_INFO "stepper: Error ioctl MOTOR_PWM_SET is smaller that min_ns.\n", id, mot_nump[id]);
+				printk(KERN_INFO "stepper: Error ioctl MOTOR_PWM_SET is smaller that min_ns.\n");
 				return -1;
 			}
 
-			mot->interval = ktime_set(0, arg);
+			mot->interval = ktime_set(0, (long) arg);
 			break;
 
 		case MOTOR_RESET:
@@ -246,7 +246,7 @@ static int motor_write (struct file *file, const char *buf, size_t count, loff_t
 	mutex_lock(&mot->mmutex);
 
 	mot->count = 1;	//execute step_max steps
-	mot->cancel = 0
+	mot->cancel = 0;
 	hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
 
 	/* so I wiil be locked here until the motor didn't arrive at end of axis or it reach step_max */
@@ -292,7 +292,7 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 	hrtimer_init(&(motor[id].hrt), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
 	motor[id].hrt.function = &gpio_timeout;
-	motor[id].interval = min_ns * 1000;
+	motor[id].interval = ktime_set(0, (long) min_ns * 1000);
 
 	if ( gpio_request(motor[id].g_enable, "motor-enable") < 0 ) {
 		goto err_gpioenable;
