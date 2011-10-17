@@ -60,6 +60,8 @@ struct motor_device {
 	unsigned long num_steps;
 
 	struct cdev *mcdev;
+
+	int cancel;		//requesto to cancel the operation due to irq
 };
 
 static unsigned int mot0[6] __initdata;
@@ -68,6 +70,8 @@ static unsigned int mot2[6] __initdata;
 static unsigned int mot3[6] __initdata;
 
 static unsigned int mot_nump[MAX_MOT_NUM] __initdata;
+
+static int min_ns;
 
 #define BUS_PARM_DESC \
 	" config -> en,dir,step,[limit,lowpwr,polarity]"
@@ -102,9 +106,11 @@ struct motor_device * find_cdev (struct cdev *cdev)
 	return 0;
 }
 
-static irqreturn_t stepper_irq(int irq, void *motor_ptr){
+static irqreturn_t stepper_irq(int irq, void *motor){
 	/* we are at the end of the rail on this direction */
-	hrtimer_try_to_cancel(&((struct motor_device *)motor_ptr)->hrt);
+	((struct motor_device *)motor)->cancel=1;
+
+
 	return IRQ_HANDLED;
 }
 
@@ -112,6 +118,11 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 {
 	struct motor_device *mot = find_hrt(t);
 
+	if ((mot->count == 1 && mot->steps >= mot->steps_max) || mot->cancel ) {
+		hrtimer_try_to_cancel(&(mot->hrt));
+
+		return HRTIMER_NORESTART;
+	}
 
 	if (mot->status) {
 		gpio_set_value(mot->g_step ,0);
@@ -120,13 +131,6 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 		gpio_set_value(mot->g_step ,1);
 		mot->status = 1;
 		mot->steps++;
-	}
-
-	if (mot->count == 1 && mot->steps >= mot->steps_max) {
-		hrtimer_try_to_cancel(&(mot->hrt));
-		// Reset to home if steps_max is reached
-		mot->steps = 0;
-		return HRTIMER_NORESTART;
 	}
 
 	hrtimer_forward(&(mot->hrt), ktime_get(), mot->interval);
@@ -162,12 +166,14 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 
 		case MOTOR_START:
 			mot->count = 1;	//execute step_max steps
+			mot->cancel = 0;
 			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
 			break;
 
 		case MOTOR_PWM_ON:
 			//run without step count
 			mot->count = 0;
+			mot->cancel = 0;
 			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
 			break;
 
@@ -176,10 +182,14 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 			break;
 
 		case MOTOR_PWM_SET:
-			//set the pwm period in ms
-			if (arg == 0)	//ensure a reliable value
-				arg =1;
-			mot->interval = ktime_set(0, arg * 1000UL);
+			//set the pwm period in ns
+
+			if (arg < min_ns) {
+				printk(KERN_INFO "stepper: Error ioctl MOTOR_PWM_SET is smaller that min_ns.\n", id, mot_nump[id]);
+				return -1;
+			}
+
+			mot->interval = ktime_set(0, arg);
 			break;
 
 		case MOTOR_RESET:
@@ -244,9 +254,8 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 
 	hrtimer_init(&(motor[id].hrt), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
-
 	motor[id].hrt.function = &gpio_timeout;
-	motor[id].interval = ktime_set(0, 1000000UL);
+	motor[id].interval = min_ns * 1000;
 
 	if ( gpio_request(motor[id].g_enable, "motor-enable") < 0 ) {
 		goto err_gpioenable;
@@ -342,7 +351,8 @@ static int __init motor_init(void)
 	printk(KERN_INFO DRV_DESC ", version " DRV_VERSION "\n");
 
 	hrtimer_get_res(CLOCK_MONOTONIC, &tp);
-	printk(KERN_INFO "Minimun clock resolution is %ldns\n", tp.tv_nsec);
+	min_ns = tp.tv_nsec;
+	printk(KERN_INFO "Minimun clock resolution is %ldns, defautl stepper value is min_ns*1000\n", tp.tv_nsec);
 
 	motor = kmalloc(sizeof(struct motor_device) * MAX_MOT_NUM, GFP_KERNEL );
 
