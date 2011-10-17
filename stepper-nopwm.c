@@ -24,6 +24,7 @@
 #include <linux/platform_device.h>
 #include <linux/hrtimer.h>
 #include <linux/workqueue.h>
+#include <linux/mutex.h>
 
 #include <asm/uaccess.h>
 
@@ -58,6 +59,7 @@ struct motor_device {
 	int status;
 
 	unsigned long num_steps;
+	struct mutex mmutex;
 
 	struct cdev *mcdev;
 
@@ -110,6 +112,8 @@ static irqreturn_t stepper_irq(int irq, void *motor){
 	/* we are at the end of the rail on this direction */
 	((struct motor_device *)motor)->cancel=1;
 
+	/* release the lock*/ 
+	mutex_unlock (&((struct motor_device *)motor)->mmutex);
 
 	return IRQ_HANDLED;
 }
@@ -121,6 +125,8 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 	if ((mot->count == 1 && mot->steps >= mot->steps_max) || mot->cancel ) {
 		hrtimer_try_to_cancel(&(mot->hrt));
 
+		/* release the lock*/
+		mutex_unlock (&(mot)->mmutex);
 		return HRTIMER_NORESTART;
 	}
 
@@ -221,9 +227,40 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 }
 
 
+/* WRITE interface */
+static int motor_write (struct file *file, const char *buf, size_t count, loff_t *ppos){
+
+	char kbuf[5], *eop;
+
+	if (copy_from_user(kbuf, buf, (5>count)? 5 : count ))
+		return -1;
+
+	struct cdev *cdev = file->f_dentry->d_inode->i_cdev;
+	struct motor_device *mot = find_cdev(cdev);
+
+	/* set the numbers of steps and ... */
+	mot->steps_max = simple_strtol(kbuf, &eop, 10);
+	mot->steps=0;
+
+	/* aquire the mutex, only the interrupt or hrtimer can unlock me ...*/
+	mutex_lock(&mot->mmutex);
+
+	mot->count = 1;	//execute step_max steps
+	mot->cancel = 0
+	hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
+
+	/* so I wiil be locked here until the motor didn't arrive at end of axis or it reach step_max */
+	mutex_lock (&mot->mmutex);
+	mutex_unlock (&mot->mmutex);
+
+	return mot->steps_max - mot->steps;
+}
+
+
 struct file_operations motor_fops = {
 	.owner 		= THIS_MODULE,
 	.unlocked_ioctl = motor_ioctl,
+	.write = motor_write,
 };
 
 static int __init motor_add_one(unsigned int id, unsigned int *params)
@@ -297,6 +334,8 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 
 	/* set to home */
 	motor[id].steps = 0;
+
+	mutex_init(&(motor[id].mmutex));
 
 	/* alloc a new device number (major: dynamic, minor: id) */
 	status = alloc_chrdev_region(&motor_devno, id, 1, "motor");

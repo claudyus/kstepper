@@ -9,6 +9,7 @@ VERSION HISTORY
 tag v0.5:
  * Fix some compile errors
  * Add the motor.py utils to manage the motors on user-space
+ * Limits pins are optional
 
 tag v0.4:
  * Reorganize the no-pwm version. Now it using a struct to mangle the data.
