@@ -242,18 +242,24 @@ static int motor_write (struct file *file, const char *buf, size_t count, loff_t
 	mot->steps_max = simple_strtol(kbuf, &eop, 10);
 	mot->steps=0;
 
+	printk(KERN_INFO "stepper: write %d \n", mot->steps_max);
+
+	printk(KERN_INFO "stepper: write prelock1");
 	/* aquire the mutex, only the interrupt or hrtimer can unlock me ...*/
 	mutex_lock(&mot->mmutex);
+	printk(KERN_INFO "stepper: write postlock1");
 
 	mot->count = 1;	//execute step_max steps
 	mot->cancel = 0;
 	hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
 
 	/* so I wiil be locked here until the motor didn't arrive at end of axis or it reach step_max */
+	printk(KERN_INFO "stepper: write prelock2");
 	mutex_lock (&mot->mmutex);
+	printk(KERN_INFO "stepper: write postlock2");
 	mutex_unlock (&mot->mmutex);
 
-	return mot->steps_max - mot->steps;
+	return count;
 }
 
 
