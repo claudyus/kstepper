@@ -217,6 +217,8 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 		case MOTOR_TO_END:
 			to_end = mot->steps_max - mot->steps;
 			copy_to_user(&arg, &to_end, sizeof(unsigned long));
+			if (to_end > 0)
+				return -EAGAIN;
 			break;
 
 		default:
