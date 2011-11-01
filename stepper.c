@@ -143,46 +143,44 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 	int retval = 0;
 	unsigned long to_end;
 
-	/* Ioctl was recently restructured http://lwn.net/Articles/119652/ */
-	struct cdev *cdev = file->f_dentry->d_inode->i_cdev;
-	struct motor_device *mot = find_cdev(cdev);
+	struct motor_device *motor = file->private_data;
 
-	printk(KERN_INFO "stepper: ioctl if: command %d  args %ld \n", cmd, arg);
+	printk(KERN_INFO "stepper: ioctl if  command %d  args %ld \n", cmd, arg);
 
 	switch (cmd) {
 		case MOTOR_ENABLE:
 			if ((int)arg)
-				gpio_set_value (mot->g_enable, 0);
+				gpio_set_value (motor->g_enable, 0);
 			else
-				gpio_set_value (mot->g_enable, 1);
+				gpio_set_value (motor->g_enable, 1);
 			break;
 
 		case MOTOR_DIR:
 			if ((int)arg)
-				gpio_set_value (mot->g_dir, 1);
+				gpio_set_value (motor->g_dir, 1);
 			else
-				gpio_set_value (mot->g_dir, 0);
+				gpio_set_value (motor->g_dir, 0);
 			break;
 
 		case MOTOR_START:
-			mot->count = 1;	/* execute step_max steps */
-			mot->cancel = 0;
+			motor->count = 1;	/* execute step_max steps */
+			motor->cancel = 0;
 			if ((int)arg != 0) {
-				mot->steps_max = (int)arg;
-				mot->steps=0;
+				motor->steps_max = (int)arg;
+				motor->steps=0;
 			}
-			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
+			hrtimer_start(&(motor->hrt), motor->interval, HRTIMER_MODE_REL);
 			break;
 
 		case MOTOR_PWM_ON:
 			/* run without step count */
-			mot->count = 0;
-			mot->cancel = 0;
-			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
+			motor->count = 0;
+			motor->cancel = 0;
+			hrtimer_start(&(motor->hrt), motor->interval, HRTIMER_MODE_REL);
 			break;
 
 		case MOTOR_PWM_OFF:
-			hrtimer_cancel(&(mot->hrt));
+			hrtimer_cancel(&(motor->hrt));
 			break;
 
 		case MOTOR_PWM_SET:
@@ -191,23 +189,23 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 				printk(KERN_INFO "stepper: Error ioctl MOTOR_PWM_SET is smaller that min_ns.\n");
 				return -1;
 			}
-			mot->interval = ktime_set(0, (long)arg);
+			motor->interval = ktime_set(0, (long)arg);
 			break;
 
 		case MOTOR_RESET:
-			mot->steps = 0; /* set the actual position as home */
+			motor->steps = 0; /* set the actual position as home */
 			break;
 
 		case MOTOR_LOWPWR:
 			if ((int)arg)
-				gpio_set_value (mot->g_lpwr, 1);
+				gpio_set_value (motor->g_lpwr, 1);
 			else
-				gpio_set_value (mot->g_lpwr, 0);
+				gpio_set_value (motor->g_lpwr, 0);
 			break;
 
 		/* return steps_max-step */
 		case MOTOR_TO_END:
-			to_end = mot->steps_max - mot->steps;
+			to_end = motor->steps_max - motor->steps;
 			copy_to_user(&arg, &to_end, sizeof(unsigned long));
 			if (to_end > 0)
 				return -EAGAIN;
