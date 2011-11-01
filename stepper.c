@@ -138,7 +138,7 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 }
 
 /* IOCTL interface */
-static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
+long motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 
 	int retval = 0;
 	unsigned long to_end;
@@ -248,7 +248,7 @@ static int __init motor_add_one(unsigned int id, unsigned int *params)
 		printk(KERN_INFO "stepper: nothing to register for motor %d, too few arguments: %d.\n", id, mot_nump[id]);
 		return 0;
 	}
-//	Supported args: motX=en,dir,step,limit[,lowpwr,polarity]
+/*	Supported args: motX=en,dir,step,limit[,lowpwr,polarity] */
 	motor[id].g_enable = params[0];
 	motor[id].g_dir = params[1];
 	motor[id].g_step = params[2];
