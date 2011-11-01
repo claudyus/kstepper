@@ -10,7 +10,7 @@ motor_num = sys.argv[1]
 fd = open("/dev/motor%d" % atoi(motor_num))
 
 
-#option with 2 args
+#options with 2 args
 if find(sys.argv[2], "en") != -1:	#enable
 	ioctl(fd, 19210, 1)
 	print "enable"
@@ -37,11 +37,14 @@ if find(sys.argv[2], "ho") != -1:	#home
 	exit(1)
 
 if find(sys.argv[2], "sta") != -1:	#start
-	ioctl(fd, 19217)
+	if sys.argv[3] != "":
+			ioctl(fd, 19217, atoi(sys.argv[3]))
+	else:
+		ioctl(fd, 19217)
 	print "start"
 	exit(1)
 
-#option with 3 args
+#options with 3 args
 if find(sys.argv[2], "dir") != -1:	#dir
 	ioctl(fd, 19211, atoi(sys.argv[3]))
 	print "direction"
