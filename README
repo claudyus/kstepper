@@ -6,6 +6,12 @@ More info on use and ioctl interface see tthe code or:
 
 VERSION HISTORY
 ---------------
+tag v0.6:
+ * Implement a sync method with fasync (http://makelinux.com/ldd3/chp-6-sect-4)
+ * Return EAGAIN if not at the end in MOTOR_TO_END
+ * Reset the steps and set the steps_max to arg if is passed to MOTOR_START
+ * Rename driver to stepper.ko
+
 tag v0.5:
  * Fix some compile errors
  * Add the motor.py utils to manage the motors on user-space
