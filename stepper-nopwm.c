@@ -32,14 +32,13 @@
 
 #define DRV_NAME	"stepper-drv"
 #define DRV_DESC	"Stepper motor driver using gpio and pwm pins"
-#define DRV_VERSION	"0.4-emulating"
+#define DRV_VERSION	"0.6"
 
 #define MAX_MOT_NUM 4
 
 /* module var*/
 struct class *motor_class;
 struct motor_device *motor;
-struct input_dev *motor_input_dev;	/*manage the limits*/
 static dev_t motor_devno = 0;
 
 struct motor_device {
@@ -113,7 +112,7 @@ static irqreturn_t stepper_irq(int irq, void *motor){
 	((struct motor_device *)motor)->cancel=1;
 
 	/* release the lock*/ 
-	mutex_unlock (&((struct motor_device *)motor)->mmutex);
+	//mutex_unlock (&((struct motor_device *)motor)->mmutex);
 
 	return IRQ_HANDLED;
 }
@@ -122,11 +121,11 @@ static enum hrtimer_restart gpio_timeout(struct hrtimer *t)
 {
 	struct motor_device *mot = find_hrt(t);
 
-	if ((mot->count == 1 && mot->steps >= mot->steps_max) || mot->cancel ) {
+	if ((mot->count && mot->steps >= mot->steps_max) || mot->cancel ) {
 		hrtimer_try_to_cancel(&(mot->hrt));
 
 		/* release the lock*/
-		mutex_unlock (&(mot)->mmutex);
+		//mutex_unlock (&(mot)->mmutex);
 		return HRTIMER_NORESTART;
 	}
 
@@ -177,7 +176,7 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 			break;
 
 		case MOTOR_PWM_ON:
-			//run without step count
+			/* run without step count */
 			mot->count = 0;
 			mot->cancel = 0;
 			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
@@ -188,22 +187,16 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 			break;
 
 		case MOTOR_PWM_SET:
-			//set the pwm period in ns
-
-			if (arg < min_ns) {
+			/* set the pwm period in ns */
+			if ((long)arg < min_ns) {
 				printk(KERN_INFO "stepper: Error ioctl MOTOR_PWM_SET is smaller that min_ns.\n");
 				return -1;
 			}
-
-			mot->interval = ktime_set(0, (long) arg);
+			mot->interval = ktime_set(0, (long)arg);
 			break;
 
 		case MOTOR_RESET:
 			mot->steps = 0; /* set the actual position as home */
-			break;
-
-		case MOTOR_STEPS:
-			mot->steps_max = arg; /* set the steps limit */
 			break;
 
 		case MOTOR_LOWPWR:
@@ -228,7 +221,7 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 	return retval;
 }
 
-
+#if 0
 /* WRITE interface */
 static int motor_write (struct file *file, const char *buf, size_t count, loff_t *ppos){
 
@@ -248,7 +241,7 @@ static int motor_write (struct file *file, const char *buf, size_t count, loff_t
 
 	printk(KERN_INFO "stepper: write prelock1");
 	/* aquire the mutex, only the interrupt or hrtimer can unlock me ...*/
-	mutex_lock(&mot->mmutex);
+	//mutex_lock(&mot->mmutex);
 	printk(KERN_INFO "stepper: write postlock1");
 
 	mot->count = 1;	//execute step_max steps
@@ -257,18 +250,18 @@ static int motor_write (struct file *file, const char *buf, size_t count, loff_t
 
 	/* so I wiil be locked here until the motor didn't arrive at end of axis or it reach step_max */
 	printk(KERN_INFO "stepper: write prelock2");
-	mutex_lock (&mot->mmutex);
+	//mutex_lock (&mot->mmutex);
 	printk(KERN_INFO "stepper: write postlock2");
-	mutex_unlock (&mot->mmutex);
+	//mutex_unlock (&mot->mmutex);
 
 	return count;
 }
-
+#endif
 
 struct file_operations motor_fops = {
 	.owner 		= THIS_MODULE,
 	.unlocked_ioctl = motor_ioctl,
-	.write = motor_write,
+//	.write = motor_write,
 };
 
 static int __init motor_add_one(unsigned int id, unsigned int *params)
