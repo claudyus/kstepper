@@ -1,5 +1,4 @@
-#obj-m := stepper-drv.o
-obj-m := stepper-nopwm.o
+obj-m := stepper.o
 
 KERNELDIR?= /lib/modules/$(shell uname -r)/build
 PWD		:= $(shell pwd)
