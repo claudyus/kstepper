@@ -170,8 +170,12 @@ static int motor_ioctl (struct file *file, unsigned int cmd, unsigned long arg){
 			break;
 
 		case MOTOR_START:
-			mot->count = 1;	//execute step_max steps
+			mot->count = 1;	/* execute step_max steps */
 			mot->cancel = 0;
+			if ((int)arg != 0) {
+				mot->steps_max = (int)arg;
+				mot->steps=0;
+			}
 			hrtimer_start(&(mot->hrt), mot->interval, HRTIMER_MODE_REL);
 			break;
 
